@@ -2,7 +2,7 @@
 
 FlockWatch is a passive RF detector designed for wearable M5StickC Plus 2 hardware (specifically matching the Watch Kit format). It passively listens to public Wi-Fi management broadcasts and BLE advertisements emitted by surveillance hardware, such as ALPRs (Automated License Plate Readers) and acoustic gunshot detection sensors, to help map public surveillance infrastructure.
 
-This project is built natively in C++ using PlatformIO and comes with a desktop companion client app.
+This project is built natively in C++ using PlatformIO and comes with a desktop companion client app written in Python. This is very much in beta and shouldn't be relied upon yet.
 
 ---
 
