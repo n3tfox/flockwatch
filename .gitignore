@@ -1,0 +1,9 @@
+.pio/
+__pycache__/
+companion/__pycache__/
+*.csv
+.DS_Store
+venv/
+.venv/
+env/
+ENV/
