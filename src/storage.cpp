@@ -2,6 +2,10 @@
 #include <ArduinoJson.h>
 
 bool storage_ok = false;
+bool config_wrap_logs = true; // Default is wrapping
+bool log_has_wrapped = false;
+bool log_is_full_stopped = false;
+bool beep_pending = false;
 
 std::vector<String> target_ouis;
 std::vector<String> target_ssids;
@@ -102,24 +106,45 @@ void storage_load_signatures() {
 
 bool storage_log_device(const String& mac, const String& ssid, int rssi, int channel, const String& type, const String& reason) {
     if (!storage_ok) return false;
-    
+    if (log_is_full_stopped) return false;
+
+    const size_t MAX_LOG_SIZE = 50 * 1024; // 50 KB
+    size_t current_size = storage_get_log_size();
+
+    if (current_size >= MAX_LOG_SIZE) {
+        if (config_wrap_logs) {
+            LittleFS.remove("/logs.old.csv");
+            if (LittleFS.rename("/logs.csv", "/logs.old.csv")) {
+                log_has_wrapped = true;
+                Serial.println("[STORAGE] Log file wrapped: logs.csv -> logs.old.csv");
+            } else {
+                Serial.println("[STORAGE] Failed to rename logs.csv for wrapping!");
+            }
+        } else {
+            log_is_full_stopped = true;
+            beep_pending = true; // Trigger warning beeps on main loop
+            Serial.println("[STORAGE] Log file full. Stopped recording.");
+            return false;
+        }
+    }
+
     // Check if we need to write header first
     bool write_header = !LittleFS.exists("/logs.csv");
-    
+
     File file = LittleFS.open("/logs.csv", "a");
     if (!file) {
         Serial.println("[STORAGE] Failed to open logs.csv for appending!");
         return false;
     }
-    
+
     if (write_header) {
         file.println("timestamp,mac,ssid,rssi,channel,type,reason");
     }
-    
+
     unsigned long timestamp = millis();
     file.printf("%lu,%s,%s,%d,%d,%s,%s\n", timestamp, mac.c_str(), ssid.c_str(), rssi, channel, type.c_str(), reason.c_str());
     file.close();
-    
+
     Serial.printf("[STORAGE] Logged: MAC=%s, SSID=%s, RSSI=%d, Ch=%d, Type=%s, Reason=%s\n", 
                   mac.c_str(), ssid.c_str(), rssi, channel, type.c_str(), reason.c_str());
     return true;
@@ -127,10 +152,18 @@ bool storage_log_device(const String& mac, const String& ssid, int rssi, int cha
 
 bool storage_clear_logs() {
     if (!storage_ok) return false;
+    bool res1 = true;
+    bool res2 = true;
     if (LittleFS.exists("/logs.csv")) {
-        return LittleFS.remove("/logs.csv");
+        res1 = LittleFS.remove("/logs.csv");
     }
-    return true;
+    if (LittleFS.exists("/logs.old.csv")) {
+        res2 = LittleFS.remove("/logs.old.csv");
+    }
+    log_has_wrapped = false;
+    log_is_full_stopped = false;
+    beep_pending = false;
+    return res1 && res2;
 }
 
 size_t storage_get_log_size() {

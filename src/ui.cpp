@@ -3,13 +3,15 @@
 #include "wifi_sniffer.h"
 #include "ble_scanner.h"
 #include "ble_transfer.h"
+#include "scan_mode.h"
 #include <M5Unified.h>
 
 UIState current_ui_state = UI_STATE_DASHBOARD;
 int screen_rotation = 1; // 1 = landscape (USB right), 3 = flipped landscape (USB left)
 
 // LGFX Sprite canvas for flicker-free double buffering
-static LGFX_Sprite canvas(&M5.Display);
+static LGFX_Sprite* canvas_ptr = nullptr;
+#define canvas (*canvas_ptr)
 
 // Last matched device info
 static String last_mac = "None";
@@ -20,15 +22,14 @@ static String last_reason = "None";
 static uint32_t last_match_time = 0;
 
 // Stats
-extern uint32_t wifi_logged_count;
-extern uint32_t ble_logged_count;
+#include "match_queue.h"
 
 // Menu variables
 static int menu_index = 0;
 static const int menu_count = 7;
 static const char* menu_items[menu_count] = {
-    "WiFi Sniffing",
-    "BLE Scanning",
+    "Interlacing",
+    "Wrap Logs",
     "Start BLE Transfer",
     "Rotate Screen",
     "Clear Logs",
@@ -37,6 +38,7 @@ static const char* menu_items[menu_count] = {
 };
 
 void ui_init() {
+    canvas_ptr = new LGFX_Sprite(&M5.Display);
     M5.Display.setRotation(screen_rotation);
     canvas.createSprite(240, 135);
     canvas.setTextColor(TFT_WHITE, TFT_BLACK);
@@ -94,8 +96,8 @@ static void draw_dashboard() {
     canvas.setTextColor(TFT_WHITE, TFT_BLACK);
     char buf_wifi[20];
     char buf_ble[20];
-    snprintf(buf_wifi, sizeof(buf_wifi), "WiFi: %d", wifi_logged_count);
-    snprintf(buf_ble, sizeof(buf_ble), "BLE:  %d", ble_logged_count);
+    snprintf(buf_wifi, sizeof(buf_wifi), "WiFi: %u", wifi_logged_count);
+    snprintf(buf_ble, sizeof(buf_ble), "BLE:  %u", ble_logged_count);
     canvas.drawString(buf_wifi, 6, 40);
     canvas.drawString(buf_ble, 6, 54);
     
@@ -177,11 +179,27 @@ static void draw_menu() {
     uint16_t c_cyan = canvas.color565(0, 220, 255);
     uint16_t c_grey = canvas.color565(80, 80, 80);
     uint16_t c_light_grey = canvas.color565(180, 180, 180);
+    uint16_t c_green = canvas.color565(0, 230, 100);
+    uint16_t c_orange = canvas.color565(255, 140, 0);
     
     // Header
     canvas.setTextSize(1.5);
     canvas.setTextColor(c_cyan, TFT_BLACK);
     canvas.drawString("SETTINGS MENU", 6, 4);
+    
+    // Display Wrap Issue in Header
+    canvas.setTextSize(1.1);
+    if (log_is_full_stopped) {
+        canvas.setTextColor(TFT_RED, TFT_BLACK);
+        canvas.drawString("WRAP: STOPPED", 140, 6);
+    } else if (log_has_wrapped) {
+        canvas.setTextColor(c_orange, TFT_BLACK);
+        canvas.drawString("WRAP: WRAPPED", 140, 6);
+    } else {
+        canvas.setTextColor(c_green, TFT_BLACK);
+        canvas.drawString("WRAP: OK", 170, 6);
+    }
+    
     canvas.drawFastHLine(0, 18, 240, c_grey);
     
     // Render menu items
@@ -202,9 +220,9 @@ static void draw_menu() {
         // Draw state status on toggles
         canvas.setTextColor(c_light_grey, (i == menu_index) ? c_cyan : TFT_BLACK);
         if (i == 0) {
-            canvas.drawString(wifi_sniffer_running ? "[ON]" : "[OFF]", 170, y);
+            canvas.drawString(config_interlacing ? "[ON]" : "[OFF]", 170, y);
         } else if (i == 1) {
-            canvas.drawString(ble_scanner_running ? "[ON]" : "[OFF]", 170, y);
+            canvas.drawString(config_wrap_logs ? "[ON]" : "[OFF]", 170, y);
         } else if (i == 3) {
             char rot_buf[10];
             snprintf(rot_buf, sizeof(rot_buf), "[Rot:%d]", screen_rotation);
@@ -303,14 +321,15 @@ void ui_update() {
             M5.Speaker.tone(1500, 50);
         }
         else if (M5.BtnB.wasPressed()) { // Side button
-            // Reset counters
-            wifi_logged_count = 0;
-            ble_logged_count = 0;
+            // Reset counters and clear logs
+            storage_clear_logs();
+            match_queue_reset_stats();
             last_mac = "None";
             last_ssid = "None";
             last_rssi = 0;
             last_type = "None";
             last_reason = "None";
+            scan_mode_init();
             M5.Speaker.tone(800, 50);
         }
         
@@ -324,21 +343,12 @@ void ui_update() {
         else if (M5.BtnA.wasPressed()) { // Front button to select
             M5.Speaker.tone(1500, 50);
             
-            if (menu_index == 0) { // WiFi Sniffer toggle
-                if (wifi_sniffer_running) {
-                    wifi_sniffer_stop();
-                } else {
-                    ble_scanner_stop();
-                    wifi_sniffer_start();
-                }
+            if (menu_index == 0) { // Interlacing toggle
+                config_interlacing = !config_interlacing;
+                scan_mode_init();
             }
-            else if (menu_index == 1) { // BLE Scanner toggle
-                if (ble_scanner_running) {
-                    ble_scanner_stop();
-                } else {
-                    wifi_sniffer_stop();
-                    ble_scanner_start(5);
-                }
+            else if (menu_index == 1) { // Wrap Logs toggle
+                config_wrap_logs = !config_wrap_logs;
             }
             else if (menu_index == 2) { // Start BLE Transfer
                 wifi_sniffer_stop();
@@ -354,6 +364,13 @@ void ui_update() {
             }
             else if (menu_index == 4) { // Clear Logs
                 storage_clear_logs();
+                match_queue_reset_stats();
+                last_mac = "None";
+                last_ssid = "None";
+                last_rssi = 0;
+                last_type = "None";
+                last_reason = "None";
+                scan_mode_init();
                 // Play clear logs tone sequence
                 M5.Speaker.tone(600, 100);
                 delay(100);
@@ -380,8 +397,8 @@ void ui_update() {
             M5.Speaker.tone(1200, 50);
             current_ui_state = UI_STATE_DASHBOARD;
             
-            // Restart Wi-Fi sniffer as default after exit
-            wifi_sniffer_start();
+            // Resume default scan mode after exiting transfer
+            scan_mode_resume_default();
             return;
         }
         

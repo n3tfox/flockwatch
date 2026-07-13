@@ -6,8 +6,7 @@ uint32_t ble_packets_scanned = 0;
 
 static NimBLEScan* pBLEScan = nullptr;
 
-// Extern match processor in main
-extern void process_device_match(const String& mac, const String& ssid, int rssi, int channel, const String& type, const String& reason);
+#include "match_queue.h"
 
 class FlockAdvertisedDeviceCallbacks: public NimBLEAdvertisedDeviceCallbacks {
     void onResult(NimBLEAdvertisedDevice* advertisedDevice) override {
@@ -82,21 +81,28 @@ class FlockAdvertisedDeviceCallbacks: public NimBLEAdvertisedDeviceCallbacks {
         }
         
         if (is_match) {
-            process_device_match(mac, name, advertisedDevice->getRSSI(), 0, "BLE", reason);
+            match_queue_submit(mac.c_str(), name.c_str(), advertisedDevice->getRSSI(), 0, "BLE", reason.c_str());
         }
     }
 };
 
+static FlockAdvertisedDeviceCallbacks ble_callbacks;
+
 void ble_scanner_init() {
+    static bool initialized = false;
+    if (initialized) return;
+
     if (!NimBLEDevice::getInitialized()) {
         NimBLEDevice::init("FlockWatch");
     }
     
     pBLEScan = NimBLEDevice::getScan();
-    pBLEScan->setAdvertisedDeviceCallbacks(new FlockAdvertisedDeviceCallbacks(), true);
+    pBLEScan->setAdvertisedDeviceCallbacks(&ble_callbacks, true);
     pBLEScan->setActiveScan(true); // Active scan to request scan responses (names, mfg data)
     pBLEScan->setInterval(97);     // Standard interval/window
     pBLEScan->setWindow(49);
+    
+    initialized = true;
 }
 
 void ble_scanner_start(int duration_secs) {

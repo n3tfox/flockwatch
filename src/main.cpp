@@ -5,69 +5,69 @@
 #include "ble_scanner.h"
 #include "ble_transfer.h"
 #include "ui.h"
+#include "match_queue.h"
+#include "scan_mode.h"
 
-// Unique matches counters
-uint32_t wifi_logged_count = 0;
-uint32_t ble_logged_count = 0;
+// Non-blocking indicator variables
+static bool match_indicator_pending = false;
+static uint32_t match_indicator_start = 0;
+static int match_indicator_step = -1;
 
-// Deduplication cache structure
-struct DedupeDevice {
-    String mac;
-    uint32_t timestamp;
-};
-static std::vector<DedupeDevice> dedupe_cache;
+static bool full_beep_pending = false;
+static uint32_t full_beep_start = 0;
+static int full_beep_step = -1;
 
-// Dual-mode state machine variables
-static uint32_t last_mode_swap = 0;
-static bool current_mode_wifi = true;
-static uint32_t last_channel_hop = 0;
+void trigger_match_indicator() {
+    match_indicator_pending = true;
+    match_indicator_start = millis();
+    match_indicator_step = 0;
+}
 
-// Match processor called by Sniffer and Scanner callbacks
-void process_device_match(const String& mac, const String& ssid, int rssi, int channel, const String& type, const String& reason) {
-    uint32_t now_ms = millis();
-    
-    // Clean up expired deduplication entries (>30 seconds old)
-    for (auto it = dedupe_cache.begin(); it != dedupe_cache.end(); ) {
-        if (now_ms - it->timestamp > 30000) {
-            it = dedupe_cache.erase(it);
+void trigger_full_beep() {
+    full_beep_pending = true;
+    full_beep_start = millis();
+    full_beep_step = 0;
+}
+
+static void update_indicators() {
+    // 1. Process match indicators
+    if (match_indicator_pending) {
+        uint32_t elapsed = millis() - match_indicator_start;
+        if (elapsed < 50) {
+            digitalWrite(19, HIGH);
         } else {
-            if (it->mac == mac) {
-                return; // Duplicate found, ignore logging and alerts
-            }
-            ++it;
+            digitalWrite(19, LOW);
+        }
+
+        if (match_indicator_step == 0) {
+            M5.Speaker.tone(1800, 80);
+            match_indicator_step = 1;
+        } else if (match_indicator_step == 1 && elapsed >= 100) {
+            M5.Speaker.tone(2200, 80);
+            match_indicator_step = 2;
+        } else if (match_indicator_step == 2 && elapsed >= 180) {
+            match_indicator_pending = false;
         }
     }
-    
-    // Enforce cache memory limit (max 100 entries)
-    if (dedupe_cache.size() >= 100) {
-        dedupe_cache.erase(dedupe_cache.begin()); // Evict oldest
+
+    // 2. Process warning full beeps
+    if (beep_pending) {
+        beep_pending = false;
+        trigger_full_beep();
     }
-    
-    // Add to cache
-    dedupe_cache.push_back({mac, now_ms});
-    
-    // Write match to CSV logs on LittleFS
-    bool logged = storage_log_device(mac, ssid, rssi, channel, type, reason);
-    if (logged) {
-        if (type.startsWith("WIFI")) {
-            wifi_logged_count++;
-        } else if (type == "BLE") {
-            ble_logged_count++;
+
+    if (full_beep_pending) {
+        uint32_t elapsed = millis() - full_beep_start;
+        if (full_beep_step == 0) {
+            M5.Speaker.tone(1500, 150);
+            full_beep_step = 1;
+        } else if (full_beep_step == 1 && elapsed >= 300) {
+            M5.Speaker.tone(1500, 150);
+            full_beep_step = 2;
+        } else if (full_beep_step == 2 && elapsed >= 450) {
+            full_beep_pending = false;
         }
     }
-    
-    // Double chirp tone on matched target
-    M5.Speaker.tone(1800, 80);
-    delay(100);
-    M5.Speaker.tone(2200, 80);
-    
-    // Flash built-in red LED (GPIO 19 on M5StickC Plus 2)
-    digitalWrite(19, HIGH);
-    delay(50);
-    digitalWrite(19, LOW);
-    
-    // Notify UI to update the last match panel
-    ui_log_match(mac, ssid, rssi, type, reason);
 }
 
 void setup() {
@@ -89,13 +89,14 @@ void setup() {
     // 2. Initialize LittleFS storage
     storage_init();
     
+    // Initialize match queue
+    match_queue_init();
+    
     // 3. Initialize display UI
     ui_init();
     
-    // 4. Default start with WiFi sniffer active
-    wifi_sniffer_start();
-    last_mode_swap = millis();
-    last_channel_hop = millis();
+    // 4. Initialize scan mode
+    scan_mode_init();
     
     // Play startup chime
     M5.Speaker.tone(1000, 100);
@@ -106,6 +107,12 @@ void setup() {
 }
 
 void loop() {
+    // Process queued match events
+    match_queue_process();
+
+    // Process non-blocking beeps and LEDs
+    update_indicators();
+
     // Poll button inputs and refresh display
     ui_update();
     
@@ -115,37 +122,8 @@ void loop() {
         return; 
     }
     
-    // Alternate scanning between Wi-Fi and BLE when dashboard is active
+    // Tick scanning when dashboard is active
     if (current_ui_state == UI_STATE_DASHBOARD) {
-        uint32_t now_ms = millis();
-        
-        if (current_mode_wifi) {
-            // Sniff WiFi on channel 1, 6, or 11
-            if (now_ms - last_mode_swap >= 15000) { // 15 seconds of WiFi
-                wifi_sniffer_stop();
-                ble_scanner_start(5); // Switch to BLE scan for 5 seconds
-                current_mode_wifi = false;
-                last_mode_swap = now_ms;
-                Serial.println("[MAIN] Swapping to BLE scanning.");
-            } else {
-                // Hop WiFi channels every 150ms
-                if (now_ms - last_channel_hop >= 150) {
-                    wifi_sniffer_hop();
-                    last_channel_hop = now_ms;
-                }
-            }
-        } else {
-            // BLE scanning
-            if (now_ms - last_mode_swap >= 5000) { // 5 seconds of BLE
-                ble_scanner_stop();
-                wifi_sniffer_start(); // Switch back to WiFi sniffing
-                current_mode_wifi = true;
-                last_mode_swap = now_ms;
-                last_channel_hop = now_ms;
-                Serial.println("[MAIN] Swapping to Wi-Fi sniffing.");
-            } else {
-                ble_scanner_tick();
-            }
-        }
+        scan_mode_tick();
     }
 }

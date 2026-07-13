@@ -5,6 +5,10 @@
 #include <vector>
 
 extern bool storage_ok;
+extern bool config_wrap_logs;
+extern bool log_has_wrapped;
+extern bool log_is_full_stopped;
+extern bool beep_pending;
 
 // Signature lists
 extern std::vector<String> target_ouis;
@@ -18,3 +22,4 @@ void storage_load_signatures();
 bool storage_match_oui(const String& mac_oui);
 bool storage_match_ssid(const String& ssid);
 String storage_get_all_logs();
+

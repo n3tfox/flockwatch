@@ -7,8 +7,7 @@ bool wifi_sniffer_running = false;
 uint8_t wifi_sniffer_channel = 1;
 uint32_t wifi_packets_sniffed = 0;
 
-// Declare the match processor in main
-extern void process_device_match(const String& mac, const String& ssid, int rssi, int channel, const String& type, const String& reason);
+#include "match_queue.h"
 
 // Helper to parse SSID from 802.11 Information Elements (IE)
 static bool parse_ssid_ie(const uint8_t* payload, int body_offset, int total_len, String& ssid) {
@@ -94,11 +93,12 @@ static void wifi_promiscuous_callback(void* buf, wifi_promiscuous_pkt_type_t typ
         }
         
         if (matches) {
-            process_device_match(String(mac_str), ssid, pkt->rx_ctrl.rssi, wifi_sniffer_channel, "WIFI_CLIENT", match_reason);
+            match_queue_submit(mac_str, ssid.c_str(), pkt->rx_ctrl.rssi, wifi_sniffer_channel, "WIFI_CLIENT", match_reason.c_str());
         }
     } 
     else if (frame_subtype == 8 || frame_subtype == 5) { // Beacon or Probe Response
         // Body starts at offset 36 (after 12 bytes of fixed parameters)
+        if (len < 36) return;
         parse_ssid_ie(payload, 36, len, ssid);
         
         bool oui_match = storage_match_oui(mac_oui);
@@ -116,7 +116,7 @@ static void wifi_promiscuous_callback(void* buf, wifi_promiscuous_pkt_type_t typ
         }
         
         if (matches) {
-            process_device_match(String(mac_str), ssid, pkt->rx_ctrl.rssi, wifi_sniffer_channel, "WIFI_AP", match_reason);
+            match_queue_submit(mac_str, ssid.c_str(), pkt->rx_ctrl.rssi, wifi_sniffer_channel, "WIFI_AP", match_reason.c_str());
         }
     }
 }

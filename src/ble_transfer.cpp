@@ -56,6 +56,9 @@ class RxCallbacks: public NimBLECharacteristicCallbacks {
     }
 };
 
+static LogServerCallbacks serverCallbacks;
+static RxCallbacks rxCallbacks;
+
 void ble_transfer_start() {
     if (ble_transfer_active) return;
     
@@ -73,7 +76,7 @@ void ble_transfer_start() {
     }
     
     pServer = NimBLEDevice::createServer();
-    pServer->setCallbacks(new LogServerCallbacks());
+    pServer->setCallbacks(&serverCallbacks, false);
     
     NimBLEService* pService = pServer->createService(SERVICE_UUID);
     
@@ -86,7 +89,7 @@ void ble_transfer_start() {
         RX_CHARACTERISTIC_UUID,
         NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR
     );
-    pRxCharacteristic->setCallbacks(new RxCallbacks());
+    pRxCharacteristic->setCallbacks(&rxCallbacks);
     
     pService->start();
     
@@ -171,8 +174,8 @@ void ble_transfer_tick() {
         
         size_t total_size = file.size();
         char header[50];
-        snprintf(header, sizeof(header), "[START:logs.csv:%d]\n", total_size);
-        pTxCharacteristic->setValue(header);
+        snprintf(header, sizeof(header), "[START:logs.csv:%zu]\n", total_size);
+        pTxCharacteristic->setValue((uint8_t*)header, strlen(header));
         pTxCharacteristic->notify();
         delay(100); // Wait for PC to parse header
         
