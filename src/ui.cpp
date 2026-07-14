@@ -254,28 +254,35 @@ static void draw_transfer() {
     canvas.drawString("BLE LOG TRANSFER", 6, 4);
     canvas.drawFastHLine(0, 18, 240, c_grey);
     
-    canvas.setTextSize(1.2);
+    canvas.setTextSize(1.1);
     canvas.setTextColor(TFT_WHITE, TFT_BLACK);
     
-    uint8_t mac[6];
-    esp_read_mac(mac, ESP_MAC_WIFI_STA);
-    char name_buf[40];
-    snprintf(name_buf, sizeof(name_buf), "Connect to: FlockWatch-%02X%02X", mac[4], mac[5]);
-    canvas.drawString(name_buf, 6, 28);
+    uint8_t wifi_mac[6];
+    esp_read_mac(wifi_mac, ESP_MAC_WIFI_STA);
+    char name_buf[45];
+    snprintf(name_buf, sizeof(name_buf), "Name: FlockWatch-%02X%02X", wifi_mac[4], wifi_mac[5]);
+    canvas.drawString(name_buf, 6, 24);
+    
+    uint8_t bt_mac[6];
+    esp_read_mac(bt_mac, ESP_MAC_BT);
+    char mac_buf[45];
+    snprintf(mac_buf, sizeof(mac_buf), "BT MAC: %02X:%02X:%02X:%02X:%02X:%02X", 
+             bt_mac[0], bt_mac[1], bt_mac[2], bt_mac[3], bt_mac[4], bt_mac[5]);
+    canvas.drawString(mac_buf, 6, 38);
     
     // Show connection status
     if (!ble_transfer_connected) {
         canvas.setTextColor(c_light_grey, TFT_BLACK);
-        canvas.drawString("Status: Advertising (NUS)...", 6, 46);
+        canvas.drawString("Status: Advertising (NUS)...", 6, 54);
     } else {
         canvas.setTextColor(c_green, TFT_BLACK);
-        canvas.drawString("Status: Connected to PC", 6, 46);
+        canvas.drawString("Status: Connected to PC", 6, 54);
         
         // Progress bar
         canvas.setTextColor(TFT_WHITE, TFT_BLACK);
         char prog_buf[25];
         snprintf(prog_buf, sizeof(prog_buf), "Transferring: %d%%", ble_transfer_progress);
-        canvas.drawString(prog_buf, 6, 68);
+        canvas.drawString(prog_buf, 6, 70);
         
         // Visual progress bar
         canvas.drawRect(6, 85, 228, 12, c_grey);

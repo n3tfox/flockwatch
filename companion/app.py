@@ -215,7 +215,8 @@ class FlockWatchCompanion:
         try:
             loop.run_until_complete(func_coro(*args))
         except Exception as e:
-            self.root.after(0, lambda: messagebox.showerror("BLE Error", f"Operation failed: {str(e)}"))
+            err_msg = str(e)
+            self.root.after(0, lambda msg=err_msg: messagebox.showerror("BLE Error", f"Operation failed: {msg}"))
         finally:
             self.is_downloading = False
             self.root.after(0, lambda: self.btn_sync.config(state="normal"))
