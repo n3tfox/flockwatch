@@ -27,15 +27,16 @@ echo "Copying application files..."
 cp "$SCRIPT_DIR/app.py" "$INSTALL_DIR/"
 cp "$SCRIPT_DIR/requirements.txt" "$INSTALL_DIR/"
 
-# 4. Install python dependencies
-echo "Installing Python dependencies..."
-python3 -m pip install -r "$INSTALL_DIR/requirements.txt"
+# 4. Set up virtual environment and install python dependencies
+echo "Setting up virtual environment in $INSTALL_DIR/venv..."
+python3 -m venv "$INSTALL_DIR/venv"
+"$INSTALL_DIR/venv/bin/pip" install -r "$INSTALL_DIR/requirements.txt"
 
 # 5. Create wrapper launcher script
 echo "Creating wrapper script in $BIN_DIR/flockwatch-companion..."
 cat << 'EOF' > "$BIN_DIR/flockwatch-companion"
 #!/bin/bash
-exec python3 "$HOME/.local/share/flockwatch-companion/app.py" "$@"
+exec "$HOME/.local/share/flockwatch-companion/venv/bin/python" "$HOME/.local/share/flockwatch-companion/app.py" "$@"
 EOF
 chmod +x "$BIN_DIR/flockwatch-companion"
 
