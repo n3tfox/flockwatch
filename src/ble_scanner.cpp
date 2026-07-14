@@ -89,20 +89,14 @@ class FlockAdvertisedDeviceCallbacks: public NimBLEAdvertisedDeviceCallbacks {
 static FlockAdvertisedDeviceCallbacks ble_callbacks;
 
 void ble_scanner_init() {
-    static bool initialized = false;
-    if (initialized) return;
-
     if (!NimBLEDevice::getInitialized()) {
         NimBLEDevice::init("FlockWatch");
+        pBLEScan = NimBLEDevice::getScan();
+        pBLEScan->setAdvertisedDeviceCallbacks(&ble_callbacks, true);
+        pBLEScan->setActiveScan(true); // Active scan to request scan responses (names, mfg data)
+        pBLEScan->setInterval(97);     // Standard interval/window
+        pBLEScan->setWindow(49);
     }
-    
-    pBLEScan = NimBLEDevice::getScan();
-    pBLEScan->setAdvertisedDeviceCallbacks(&ble_callbacks, true);
-    pBLEScan->setActiveScan(true); // Active scan to request scan responses (names, mfg data)
-    pBLEScan->setInterval(97);     // Standard interval/window
-    pBLEScan->setWindow(49);
-    
-    initialized = true;
 }
 
 void ble_scanner_start(int duration_secs) {
