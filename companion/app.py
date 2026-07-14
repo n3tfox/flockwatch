@@ -76,9 +76,11 @@ class FlockWatchCompanion:
         self.ble_thread = None
         self.log_data = []
         self.downloaded_content = ""
+        self.downloaded_chunks = []
         self.is_downloading = False
         self.total_expected_bytes = 0
         self.received_bytes = 0
+        self.batch_insert_task_id = None
         
         self.create_widgets()
         
@@ -189,6 +191,7 @@ class FlockWatchCompanion:
         self.btn_sync.config(state="disabled")
         self.progress["value"] = 0
         self.downloaded_content = ""
+        self.downloaded_chunks = []
         
         # Start Bleak in a background thread to prevent Tkinter freezing
         self.ble_thread = threading.Thread(target=self.run_async_ble_task, args=(self.ble_sync_process,))
@@ -255,8 +258,11 @@ class FlockWatchCompanion:
         async with BleakClient(client_address) as client:
             self.root.after(0, lambda: self.log_status("Connected. Ready to sync."))
             
+            last_ui_update = 0.0
+            
             # Setup notification callback
             def notification_handler(sender, data):
+                nonlocal last_ui_update
                 msg = data.decode("utf-8", errors="ignore")
                 
                 # Check for start marker
@@ -266,19 +272,25 @@ class FlockWatchCompanion:
                     if len(parts) >= 2:
                         self.total_expected_bytes = int(parts[1])
                     self.received_bytes = 0
-                    self.downloaded_content = ""
+                    self.downloaded_chunks = []
                     self.root.after(0, lambda: self.log_status("Transferring file..."))
                 # Check for end marker
                 elif msg.startswith("[END]"):
+                    self.downloaded_content = "".join(self.downloaded_chunks)
+                    self.root.after(0, lambda: self.progress.configure(value=100))
+                    self.root.after(0, lambda: self.log_status("Download complete."))
                     self.root.after(0, self.save_downloaded_logs)
                 # Else collect data
                 else:
-                    self.downloaded_content += msg
+                    self.downloaded_chunks.append(msg)
                     self.received_bytes += len(data)
                     if self.total_expected_bytes > 0:
                         pct = min(100, int((self.received_bytes * 100) / self.total_expected_bytes))
-                        self.root.after(0, lambda: self.progress.configure(value=pct))
-                        self.root.after(0, lambda: self.log_status(f"Downloading: {pct}%"))
+                        now = time.time()
+                        if now - last_ui_update >= 0.1:
+                            last_ui_update = now
+                            self.root.after(0, lambda p=pct: self.progress.configure(value=p))
+                            self.root.after(0, lambda p=pct: self.log_status(f"Downloading: {p}%"))
 
             await client.start_notify(NUS_TX_UUID, notification_handler)
             
@@ -379,6 +391,11 @@ class FlockWatchCompanion:
             messagebox.showerror("Parse Error", f"Failed to parse CSV log file:\n{str(e)}")
 
     def apply_filters(self, event=None):
+        # Cancel any ongoing batch insertion to prevent race conditions
+        if hasattr(self, 'batch_insert_task_id') and self.batch_insert_task_id is not None:
+            self.root.after_cancel(self.batch_insert_task_id)
+            self.batch_insert_task_id = None
+
         # Clear tree
         for item in self.tree.get_children():
             self.tree.delete(item)
@@ -386,6 +403,7 @@ class FlockWatchCompanion:
         filter_type = self.cmb_filter_type.get()
         search_query = self.ent_search.get().lower()
         
+        self.filtered_rows = []
         for idx, row in enumerate(self.log_data):
             # Check type filter
             if filter_type != "ALL" and row.get("type", "") != filter_type:
@@ -398,7 +416,23 @@ class FlockWatchCompanion:
             if search_query and (search_query not in mac and search_query not in ssid and search_query not in reason):
                 continue
                 
-            # Insert to tree
+            self.filtered_rows.append((idx, row))
+            
+        self.current_insert_idx = 0
+        self.insert_batch_size = 100
+        self.insert_delay_ms = 5  # 5ms delay
+        self.batch_insert_task_id = None
+        
+        self.insert_batch()
+
+    def insert_batch(self):
+        if self.current_insert_idx >= len(self.filtered_rows):
+            self.batch_insert_task_id = None
+            return
+            
+        end_idx = min(self.current_insert_idx + self.insert_batch_size, len(self.filtered_rows))
+        for i in range(self.current_insert_idx, end_idx):
+            idx, row = self.filtered_rows[i]
             self.tree.insert("", "end", iid=str(idx), values=(
                 row.get("timestamp", ""),
                 row.get("mac", ""),
@@ -408,6 +442,9 @@ class FlockWatchCompanion:
                 row.get("type", ""),
                 row.get("reason", "")
             ))
+            
+        self.current_insert_idx = end_idx
+        self.batch_insert_task_id = self.root.after(self.insert_delay_ms, self.insert_batch)
             
     def on_select_record(self, event):
         selected = self.tree.selection()

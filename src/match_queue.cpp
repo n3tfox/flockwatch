@@ -20,7 +20,10 @@ struct DedupeDevice {
     char mac[18];
     uint32_t timestamp;
 };
-static std::vector<DedupeDevice> dedupe_cache;
+static constexpr size_t DEDUPE_CACHE_CAPACITY = 128;
+static DedupeDevice dedupe_cache[DEDUPE_CACHE_CAPACITY];
+static size_t dedupe_write_idx = 0;
+static size_t dedupe_count = 0;
 
 static void copy_field(char* dest, size_t dest_size, const char* src) {
     if (!src) {
@@ -50,7 +53,7 @@ static bool queue_pop(MatchEvent* out) {
 void match_queue_init() {
     queue_head = 0;
     queue_tail = 0;
-    dedupe_cache.clear();
+    match_queue_clear_dedupe();
 }
 
 bool match_queue_submit(const char* mac, const char* ssid, int rssi, int channel,
@@ -75,27 +78,27 @@ bool match_queue_submit(const char* mac, const char* ssid, int rssi, int channel
 }
 
 static bool is_duplicate_mac(const char* mac, uint32_t now_ms) {
-    for (auto it = dedupe_cache.begin(); it != dedupe_cache.end(); ) {
-        if (now_ms - it->timestamp > 30000) {
-            it = dedupe_cache.erase(it);
-        } else {
-            if (strncmp(it->mac, mac, sizeof(it->mac)) == 0) {
+    size_t limit = dedupe_count < DEDUPE_CACHE_CAPACITY ? dedupe_count : DEDUPE_CACHE_CAPACITY;
+    for (size_t i = 0; i < limit; ++i) {
+        const DedupeDevice& entry = dedupe_cache[i];
+        if (now_ms - entry.timestamp <= 30000) {
+            if (strncmp(entry.mac, mac, sizeof(entry.mac)) == 0) {
                 return true;
             }
-            ++it;
         }
     }
     return false;
 }
 
 static void add_dedupe_entry(const char* mac, uint32_t now_ms) {
-    if (dedupe_cache.size() >= 100) {
-        dedupe_cache.erase(dedupe_cache.begin());
-    }
-    DedupeDevice entry;
+    DedupeDevice& entry = dedupe_cache[dedupe_write_idx];
     copy_field(entry.mac, sizeof(entry.mac), mac);
     entry.timestamp = now_ms;
-    dedupe_cache.push_back(entry);
+    
+    dedupe_write_idx = (dedupe_write_idx + 1) % DEDUPE_CACHE_CAPACITY;
+    if (dedupe_count < DEDUPE_CACHE_CAPACITY) {
+        dedupe_count++;
+    }
 }
 
 static void process_match(const MatchEvent& evt) {
@@ -134,7 +137,8 @@ void match_queue_process() {
 }
 
 void match_queue_clear_dedupe() {
-    dedupe_cache.clear();
+    dedupe_count = 0;
+    dedupe_write_idx = 0;
 }
 
 void match_queue_reset_stats() {

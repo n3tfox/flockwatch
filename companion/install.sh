@@ -14,6 +14,13 @@ if ! command -v python3 &> /dev/null; then
     exit 1
 fi
 
+if ! python3 -c "import tkinter" &> /dev/null; then
+    echo "Error: python3-tk (Tkinter) is not installed." >&2
+    echo "Please install it using your package manager." >&2
+    echo "On Debian/Ubuntu: sudo apt install python3-tk" >&2
+    exit 1
+fi
+
 # 2. Create directories
 mkdir -p "$INSTALL_DIR"
 mkdir -p "$BIN_DIR"
@@ -36,6 +43,20 @@ python3 -m venv "$INSTALL_DIR/venv"
 echo "Creating wrapper script in $BIN_DIR/flockwatch-companion..."
 cat << 'EOF' > "$BIN_DIR/flockwatch-companion"
 #!/bin/bash
+# Check if tkinter is available
+if ! "$HOME/.local/share/flockwatch-companion/venv/bin/python" -c "import tkinter" &> /dev/null; then
+    MSG="Error: python3-tk (Tkinter) is missing. This package is required to run the FlockWatch Companion GUI.\n\nPlease install it using your package manager:\nOn Debian/Ubuntu: sudo apt install python3-tk"
+    if command -v zenity &> /dev/null; then
+        zenity --error --title="FlockWatch Companion" --text="$MSG" --width=400
+    elif command -v kdialog &> /dev/null; then
+        kdialog --error "$MSG" --title "FlockWatch Companion"
+    elif command -v xmessage &> /dev/null; then
+        echo -e "$MSG" | xmessage -file - -buttons OK
+    else
+        echo -e "$MSG" >&2
+    fi
+    exit 1
+fi
 exec "$HOME/.local/share/flockwatch-companion/venv/bin/python" "$HOME/.local/share/flockwatch-companion/app.py" "$@"
 EOF
 chmod +x "$BIN_DIR/flockwatch-companion"

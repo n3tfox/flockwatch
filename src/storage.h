@@ -23,3 +23,7 @@ bool storage_match_oui(const String& mac_oui);
 bool storage_match_ssid(const String& ssid);
 String storage_get_all_logs();
 
+size_t storage_get_active_record_count();
+size_t storage_get_csv_total_size();
+String storage_get_csv_line(size_t relative_idx);
+
