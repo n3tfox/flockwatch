@@ -15,6 +15,29 @@ static bool send_logs_requested = false;
 static bool clear_logs_requested = false;
 static bool ping_requested = false;
 
+enum TransferState {
+    TRANSFER_STATE_IDLE = 0,
+    TRANSFER_STATE_START,
+    TRANSFER_STATE_SENDING,
+    TRANSFER_STATE_END
+};
+
+static TransferState transfer_state = TRANSFER_STATE_IDLE;
+static File transfer_file;
+static size_t transfer_total_size = 0;
+static size_t transfer_sent_bytes = 0;
+static uint32_t transfer_last_chunk_ms = 0;
+static constexpr uint32_t CHUNK_INTERVAL_MS = 15;
+
+static void reset_transfer_state() {
+    if (transfer_file) {
+        transfer_file.close();
+    }
+    transfer_state = TRANSFER_STATE_IDLE;
+    transfer_sent_bytes = 0;
+    transfer_total_size = 0;
+}
+
 // Custom NUS UUIDs
 #define SERVICE_UUID           "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
 #define RX_CHARACTERISTIC_UUID "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
@@ -130,8 +153,16 @@ void ble_transfer_stop() {
 }
 
 void ble_transfer_tick() {
-    if (!ble_transfer_active || !ble_transfer_connected) return;
+    // 1. Detect disconnect and clean up
+    if (!ble_transfer_active || !ble_transfer_connected) {
+        if (transfer_state != TRANSFER_STATE_IDLE) {
+            reset_transfer_state();
+            Serial.println("[BLE_TX] Connection lost, reset transfer state.");
+        }
+        return;
+    }
     
+    // 2. Handle ping
     if (ping_requested) {
         ping_requested = false;
         pTxCharacteristic->setValue("PONG\n");
@@ -139,6 +170,7 @@ void ble_transfer_tick() {
         Serial.println("[BLE_TX] Sent PONG");
     }
     
+    // 3. Handle log clear
     if (clear_logs_requested) {
         clear_logs_requested = false;
         bool res = storage_clear_logs();
@@ -151,64 +183,94 @@ void ble_transfer_tick() {
         Serial.println("[BLE_TX] Cleared logs and acknowledged");
     }
     
+    // 4. Handle log sending trigger
     if (send_logs_requested) {
         send_logs_requested = false;
-        Serial.println("[BLE_TX] Starting log file streaming...");
-        
-        if (!LittleFS.exists("/logs.csv")) {
-            pTxCharacteristic->setValue("[START:logs.csv:0]\n");
+        if (transfer_state == TRANSFER_STATE_IDLE) {
+            transfer_state = TRANSFER_STATE_START;
+            Serial.println("[BLE_TX] Starting log file streaming (non-blocking)...");
+        }
+    }
+    
+    // 5. Run the streaming state machine
+    switch (transfer_state) {
+        case TRANSFER_STATE_IDLE:
+            break;
+            
+        case TRANSFER_STATE_START: {
+            if (!LittleFS.exists("/logs.csv")) {
+                pTxCharacteristic->setValue("[START:logs.csv:0]\n");
+                pTxCharacteristic->notify();
+                transfer_state = TRANSFER_STATE_END; // Skip directly to end
+                transfer_last_chunk_ms = millis();
+                Serial.println("[BLE_TX] No log file exists. Sent empty start.");
+                break;
+            }
+            
+            transfer_file = LittleFS.open("/logs.csv", "r");
+            if (!transfer_file) {
+                pTxCharacteristic->setValue("ERROR_OPEN_FAILED\n");
+                pTxCharacteristic->notify();
+                transfer_state = TRANSFER_STATE_IDLE;
+                Serial.println("[BLE_TX] Failed to open logs.csv for streaming.");
+                break;
+            }
+            
+            transfer_total_size = transfer_file.size();
+            char header[50];
+            snprintf(header, sizeof(header), "[START:logs.csv:%zu]\n", transfer_total_size);
+            pTxCharacteristic->setValue((uint8_t*)header, strlen(header));
             pTxCharacteristic->notify();
-            delay(50);
-            pTxCharacteristic->setValue("[END]\n");
-            pTxCharacteristic->notify();
-            Serial.println("[BLE_TX] No log file exists. Sent empty.");
-            return;
+            
+            transfer_sent_bytes = 0;
+            ble_transfer_progress = 0;
+            // Delay 100ms non-blockingly before sending the first chunk
+            transfer_last_chunk_ms = millis() + 85; 
+            transfer_state = TRANSFER_STATE_SENDING;
+            break;
         }
         
-        File file = LittleFS.open("/logs.csv", "r");
-        if (!file) {
-            pTxCharacteristic->setValue("ERROR_OPEN_FAILED\n");
-            pTxCharacteristic->notify();
-            return;
+        case TRANSFER_STATE_SENDING: {
+            // Check chunk interval timer (15ms)
+            if (millis() - transfer_last_chunk_ms < CHUNK_INTERVAL_MS) {
+                break; 
+            }
+            
+            if (transfer_file && transfer_file.available()) {
+                uint8_t buffer[200];
+                int to_read = transfer_file.available();
+                if (to_read > 200) to_read = 200;
+                
+                int bytes_read = transfer_file.read(buffer, to_read);
+                if (bytes_read > 0) {
+                    pTxCharacteristic->setValue(buffer, bytes_read);
+                    pTxCharacteristic->notify();
+                    transfer_sent_bytes += bytes_read;
+                    if (transfer_total_size > 0) {
+                        ble_transfer_progress = (transfer_sent_bytes * 100) / transfer_total_size;
+                    }
+                }
+                transfer_last_chunk_ms = millis();
+            } else {
+                transfer_state = TRANSFER_STATE_END;
+                // Wait 100ms non-blockingly before sending [END]
+                transfer_last_chunk_ms = millis() + 85;
+            }
+            break;
         }
         
-        size_t total_size = file.size();
-        char header[50];
-        snprintf(header, sizeof(header), "[START:logs.csv:%zu]\n", total_size);
-        pTxCharacteristic->setValue((uint8_t*)header, strlen(header));
-        pTxCharacteristic->notify();
-        delay(100); // Wait for PC to parse header
-        
-        size_t sent_bytes = 0;
-        uint8_t buffer[200];
-        
-        while (file.available() && ble_transfer_connected) {
-            int to_read = file.available();
-            if (to_read > 200) to_read = 200;
+        case TRANSFER_STATE_END: {
+            if (millis() - transfer_last_chunk_ms < CHUNK_INTERVAL_MS) {
+                break;
+            }
             
-            int bytes_read = file.read(buffer, to_read);
-            if (bytes_read <= 0) break;
-            
-            pTxCharacteristic->setValue(buffer, bytes_read);
-            pTxCharacteristic->notify();
-            
-            sent_bytes += bytes_read;
-            ble_transfer_progress = (sent_bytes * 100) / total_size;
-            
-            // Wait 15ms to allow BLE transmission queue clearance
-            delay(15); 
-        }
-        
-        file.close();
-        
-        if (ble_transfer_connected) {
-            delay(100); // Let last data packet clear
             pTxCharacteristic->setValue("[END]\n");
             pTxCharacteristic->notify();
             ble_transfer_progress = 100;
-            Serial.println("[BLE_TX] Log file streamed completely.");
-        } else {
-            Serial.println("[BLE_TX] Transfer aborted due to disconnection.");
+            
+            reset_transfer_state();
+            Serial.println("[BLE_TX] Log file streamed completely (non-blocking).");
+            break;
         }
     }
 }
