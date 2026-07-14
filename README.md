@@ -50,6 +50,10 @@ pio run -t upload
 ```
 
 ### Companion App (Python)
+
+> [!NOTE]
+> The companion app is currently untested on Windows but should work on Linux. Please report any bugs or issues you encounter.
+
 1. Install dependencies:
    ```bash
    pip install -r companion/requirements.txt
