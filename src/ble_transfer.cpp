@@ -4,16 +4,16 @@
 #include <LittleFS.h>
 
 bool ble_transfer_active = false;
-bool ble_transfer_connected = false;
+volatile bool ble_transfer_connected = false;
 int ble_transfer_progress = 0;
 
 static NimBLEServer* pServer = nullptr;
 static NimBLECharacteristic* pTxCharacteristic = nullptr;
 static NimBLECharacteristic* pRxCharacteristic = nullptr;
 
-static bool send_logs_requested = false;
-static bool clear_logs_requested = false;
-static bool ping_requested = false;
+static volatile bool send_logs_requested = false;
+static volatile bool clear_logs_requested = false;
+static volatile bool ping_requested = false;
 
 enum TransferState {
     TRANSFER_STATE_IDLE = 0,

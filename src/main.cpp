@@ -7,6 +7,7 @@
 #include "ui.h"
 #include "match_queue.h"
 #include "scan_mode.h"
+#include "crash_detector.h"
 
 // Non-blocking indicator variables
 static bool match_indicator_pending = false;
@@ -89,6 +90,9 @@ void setup() {
     // 2. Initialize LittleFS storage
     storage_init();
     
+    // Initialize crash detector (needs storage_init to have run)
+    crash_detector_init();
+    
     // Initialize match queue
     match_queue_init();
     
@@ -107,6 +111,9 @@ void setup() {
 }
 
 void loop() {
+    // Poll serial input for crash log dump requests
+    crash_detector_tick();
+
     // Process queued match events
     match_queue_process();
 

@@ -1,7 +1,7 @@
 #pragma once
 #include <Arduino.h>
 
-extern bool wifi_sniffer_running;
+extern volatile bool wifi_sniffer_running;
 extern uint8_t wifi_sniffer_channel;
 extern uint32_t wifi_packets_sniffed;
 

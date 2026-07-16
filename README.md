@@ -6,7 +6,7 @@ This project is built natively in C++ using PlatformIO and comes with a desktop 
 
 ---
 
-## ⚡ Core Features
+## Core Features
 
 - **Passive Wi-Fi Sniffing:** Sniffs raw 802.11 management frames (Probe Requests, Beacons, Probe Responses) cycling through channels 1, 6, and 11.
 - **BLE Beacon Scanning:** Scans for BLE company manufacturer IDs, device names, and service UUIDs matching known ALPR and Raven acoustic units.
@@ -16,7 +16,7 @@ This project is built natively in C++ using PlatformIO and comes with a desktop 
 - **Wireless Log Downloader:** BLE Nordic UART Service (NUS) server streaming logs wirelessly in 200-byte packets to your PC.
 - **Companion GUI Client:** A Tkinter python app that connects via Bleak to sync logs, auto-detects paired watches via `bluetoothctl`, displays table records, and links directly to DeFlock portals.
 
-### 🕵️ Heuristics & Matching Signatures
+### Heuristics & Matching Signatures
 
 - **Flock Safety ALPR Cameras:**
   - **BLE Scanning:** Captures Bluetooth Low Energy advertisements containing Company ID `0x09C8` (XUNTONG electronic tag chipsets utilized on camera beacons) or broadcasting device names matching keywords `flock` or `fs ext battery`.
@@ -26,7 +26,7 @@ This project is built natively in C++ using PlatformIO and comes with a desktop 
 
 ---
 
-## ⌚ Hardware & Pinout (M5StickC Plus 2)
+## Hardware & Pinout (M5StickC Plus 2)
 
 - **Button A (M5 Front Key):** GPIO 37 (Select/Settings)
 - **Button B (Side Scroll Key):** GPIO 39 (Scroll down / Reset dashboard stats)
@@ -37,7 +37,7 @@ This project is built natively in C++ using PlatformIO and comes with a desktop 
 
 ---
 
-## 🚀 Building & Flashing
+## Building & Flashing
 
 ### Firmware (C++)
 To compile and flash the firmware using PlatformIO:

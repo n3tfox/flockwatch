@@ -320,12 +320,15 @@ void ui_update() {
     
     if (!screen_on) return;
     
+    bool state_changed = false;
+    
     // Handle button actions globally based on states
     if (current_ui_state == UI_STATE_DASHBOARD) {
         if (M5.BtnA.wasPressed()) { // Front button
             current_ui_state = UI_STATE_MENU;
             menu_index = 0;
             M5.Speaker.tone(1500, 50);
+            state_changed = true;
         }
         else if (M5.BtnB.wasPressed()) { // Side button
             // Reset counters and clear logs
@@ -338,17 +341,18 @@ void ui_update() {
             last_reason = "None";
             scan_mode_init();
             M5.Speaker.tone(800, 50);
+            state_changed = true;
         }
-        
-        draw_dashboard();
     } 
     else if (current_ui_state == UI_STATE_MENU) {
         if (M5.BtnB.wasPressed()) { // Side button to scroll
             menu_index = (menu_index + 1) % menu_count;
             M5.Speaker.tone(1000, 30);
+            state_changed = true;
         }
         else if (M5.BtnA.wasPressed()) { // Front button to select
             M5.Speaker.tone(1500, 50);
+            state_changed = true;
             
             if (menu_index == 0) { // Interlacing toggle
                 config_interlacing = !config_interlacing;
@@ -395,8 +399,6 @@ void ui_update() {
                 current_ui_state = UI_STATE_DASHBOARD;
             }
         }
-        
-        draw_menu();
     }
     else if (current_ui_state == UI_STATE_TRANSFER) {
         if (M5.BtnA.wasPressed()) { // Front button to exit BLE transfer
@@ -408,8 +410,20 @@ void ui_update() {
             scan_mode_resume_default();
             return;
         }
-        
-        draw_transfer();
+    }
+    
+    // Throttle rendering: draw every 100ms or immediately on button press state change
+    static uint32_t last_ui_draw = 0;
+    uint32_t now = millis();
+    if (state_changed || (now - last_ui_draw >= 100)) {
+        last_ui_draw = now;
+        if (current_ui_state == UI_STATE_DASHBOARD) {
+            draw_dashboard();
+        } else if (current_ui_state == UI_STATE_MENU) {
+            draw_menu();
+        } else if (current_ui_state == UI_STATE_TRANSFER) {
+            draw_transfer();
+        }
     }
 }
 

@@ -3,7 +3,7 @@
 #include <WiFi.h>
 #include <esp_wifi.h>
 
-bool wifi_sniffer_running = false;
+volatile bool wifi_sniffer_running = false;
 uint8_t wifi_sniffer_channel = 1;
 uint32_t wifi_packets_sniffed = 0;
 
